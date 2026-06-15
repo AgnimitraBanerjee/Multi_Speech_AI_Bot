@@ -1,0 +1,30 @@
+# ──────────────────────────────────────────────
+# Multilingual AI Speech Recognition Bot
+# Python >= 3.10 required
+# ──────────────────────────────────────────────
+
+# Speech Recognition (microphone → text)
+SpeechRecognition>=3.10.4
+PyAudio>=0.2.14           # microphone backend for SpeechRecognition
+
+# Language Detection (offline, no API key)
+langdetect>=1.0.9
+
+# Translation (free Google Translate wrapper, no API key)
+deep-translator>=1.11.4
+
+# Text-to-Speech (online, multilingual)
+gTTS>=2.5.1
+
+# Audio playback
+pygame>=2.5.2             # primary audio player (cross-platform)
+# playsound>=1.3.0        # optional fallback (uncomment if pygame unavailable)
+
+# Offline TTS fallback (English only)
+pyttsx3>=2.90
+
+# Offline STT fallback (optional — requires model download)
+# vosk>=0.3.45            # uncomment + download model to use offline STT
+
+# Standard library only — no extra package needed for:
+#   sqlite3, uuid, logging, os, sys, platform, tempfile, wave, json
