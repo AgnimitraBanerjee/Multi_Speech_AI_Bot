@@ -24,7 +24,7 @@ class ConversationManager:
     _QUESTIONS = [
         {
             "key": "full_name",
-            "question": "May I know your full name, please?",
+            "question": "What is your full name?",
         },
         {
             "key": "person_to_meet",

@@ -1,16 +1,24 @@
 """
-SpeechRecognizer: Captures microphone audio and converts it to text.
+SpeechRecognizer — Definitive Multilingual Architecture
+========================================================
 
-Final Strategy
---------------
-1. Call Google STT with en-US to get English transcription.
-2. If language is unknown, also call with non-English codes to get native script.
-3. CRITICAL VALIDATION: If a non-English STT returns native script, verify it is
-   genuine by translating it back to English and comparing with the en-US result.
-   If they are too similar (high overlap) → it was English phonetically
-   transcribed, NOT a real non-English utterance. Reject it.
-4. Only confirm a non-English language when the native-script result is
-   semantically different from the English result.
+Detection order (CRITICAL — PATH B must come before PATH A):
+
+PATH B — Indian languages (checked FIRST)
+  Hindi, Bengali, Urdu, Tamil, etc. use native scripts but are often
+  spoken in Romanized form. langdetect CANNOT detect these reliably.
+  We detect them by matching en-US transcription against a curated
+  list of Romanized Indian vocabulary. On match, we probe hi-IN/bn-IN
+  to get native-script transcription.
+
+PATH A — European/other Roman-script languages (checked SECOND)
+  French, German, Spanish, Russian etc. langdetect handles perfectly
+  when text is already in Roman/Cyrillic script from en-US STT.
+  BUT we only reach here if PATH B did not match, preventing
+  langdetect from misidentifying Indian Romanized text as Dutch/Indonesian.
+
+PATH C — English (default)
+  No Indian markers, no high-confidence foreign language detected.
 """
 
 import speech_recognition as sr
@@ -27,90 +35,111 @@ GOOGLE_LANG_MAP = {
     "en": "en-US",
 }
 
-PROBE_LANGUAGES = [
-    "hi-IN", "bn-IN", "ur-PK", "mr-IN", "gu-IN",
-    "ta-IN", "te-IN", "fr-FR", "de-DE", "es-ES",
-    "ar-SA", "ru-RU", "ko-KR", "ja-JP",
+# Languages that langdetect can detect reliably from Roman/Cyrillic script
+# These are ONLY reached if no Indian markers are found first
+ROMAN_DETECTABLE_LANGS = {
+    "fr", "de", "es", "pt", "it", "ru", "nl", "pl", "sv", "da",
+    "fi", "no", "cs", "sk", "ro", "hu", "tr", "vi",
+}
+
+# Indian language probing order (most common first)
+INDIAN_LANG_PROBES = [
+    ("hi", "hi-IN"),   # Hindi
+    ("bn", "bn-IN"),   # Bengali
+    ("ur", "ur-PK"),   # Urdu
+    ("mr", "mr-IN"),   # Marathi
+    ("gu", "gu-IN"),   # Gujarati
+    ("ta", "ta-IN"),   # Tamil
+    ("te", "te-IN"),   # Telugu
+    ("ml", "ml-IN"),   # Malayalam
+    ("pa", "pa-IN"),   # Punjabi
 ]
+
+# ---------------------------------------------------------------------------
+# Hindi Romanized vocabulary — reliable indicators of Hindi speech
+# ---------------------------------------------------------------------------
+HINDI_ROMAN_MARKERS = {
+    "mera", "meri", "mere", "main", "mai", "hoon", "hun", "hai", "hain",
+    "naam", "aap", "tum", "tu", "woh", "wo", "yeh", "ye", "kya", "kaun",
+    "kahan", "kaise", "kyun", "nahi", "nahin", "haan", "han", "aur",
+    "mujhe", "tumhe", "unhe", "milna", "milana", "chahta", "chahti",
+    "chahte", "jana", "aana", "karna", "dena", "lena", "bolna", "chahiye",
+    "bahut", "thoda", "accha", "achha", "theek", "shukriya", "dhanyavaad",
+    "namaste", "bhai", "didi", "bhaiya", "apna", "apni", "unka", "unki",
+    "humara", "tumhara", "iska", "uska", "idhar", "udhar", "yahan",
+    "wahan", "abhi", "phir", "sirf", "bas", "lekin", "magar", "par",
+    "tujhse", "usse", "inse", "unse", "saath", "baad", "pehle", "kaafi",
+    "bohot", "zaroor", "kyunki", "isliye", "matlab", "samajh", "dekho",
+    "suno", "bolo", "jao", "aao", "karo", "lao", "do", "raho", "chalte",
+}
+
+# ---------------------------------------------------------------------------
+# Bengali Romanized vocabulary — reliable indicators of Bengali speech
+# ---------------------------------------------------------------------------
+BENGALI_ROMAN_MARKERS = {
+    # Pronouns and basic words
+    "amar", "hamar", "ami", "tumi", "apni", "aar", "ebong",
+    "aache", "ache", "nei", "nai", "haan", "na",
+    # Question words
+    "ki", "ke", "keno", "kothay", "kothai", "kobe", "kemon", "kতটা",
+    "kakhon", "kotota",
+    # Verbs (present/future/past forms)
+    "jabo", "ashbo", "korbo", "bolbo", "sunbo", "dekho", "khabo",
+    "thakbo", "jaben", "asben", "korben", "bolben", "sunben", "deben",
+    "jacchi", "aschhi", "korchi", "bolchi", "sunchi", "dekhchi",
+    "thakchi", "khachhi", "porchi", "likhchi", "shunchi", "jachhi",
+    "jete", "ashte", "korte", "bolte", "sunte", "dekhte", "khete",
+    "thakte", "porte", "likhte",
+    # Nouns and common words
+    "naam", "bari", "barite", "bangla", "bhasha", "kotha", "katha",
+    "manush", "lok", "chhele", "meye", "baba", "maa", "dada", "didi",
+    "bondhu", "school", "college", "office", "kaj", "shomoy", "din",
+    "raat", "shondha", "shokal",
+    # Postpositions/particles
+    "theke", "niye", "diye", "hoye", "giye", "eshe", "kore", "bole",
+    "hobe", "hoyeche", "hoyechilo",
+    # Adjectives
+    "bhalo", "mondo", "manda", "boro", "chhoto", "noto", "shundor",
+    "ektu", "onek", "sob", "keu", "tahole", "kintu",
+    # Greetings/politeness
+    "dhanyabad", "namaskar", "nomoshkar",
+    # Connector words
+    "tahole", "kintu", "tobe", "noyto", "nahole", "karon", "jehetu",
+    # Object forms
+    "amake", "tomake", "apnake", "tader", "amader", "tomader",
+    "tar", "tার", "oder", "amar",
+}
+
+ALL_INDIAN_MARKERS = HINDI_ROMAN_MARKERS | BENGALI_ROMAN_MARKERS
 
 
 def _is_native_script(text: str) -> bool:
-    """True if text contains non-ASCII (native script) characters."""
     return any(ord(c) > 127 for c in text)
 
 
-def _word_overlap_ratio(text_a: str, text_b: str) -> float:
+def _check_indian_markers(text: str):
     """
-    Compute what fraction of words in text_a appear in text_b (case-insensitive).
-    Used to detect if native-script result is just a phonetic echo of English.
+    Check if text contains Indian Romanized vocabulary.
+    Returns ('bn_first', hindi_hits, bengali_hits) or (None, set(), set())
     """
-    if not text_a or not text_b:
-        return 0.0
-    words_a = set(text_a.lower().split())
-    words_b = set(text_b.lower().split())
-    if not words_a:
-        return 0.0
-    overlap = words_a.intersection(words_b)
-    return len(overlap) / len(words_a)
+    words = set(text.lower().split())
+    hindi_hits = words & HINDI_ROMAN_MARKERS
+    bengali_hits = words & BENGALI_ROMAN_MARKERS
 
-
-def _translate_to_english(text: str, src_lang: str) -> str:
-    """Translate native-script text back to English for validation."""
-    try:
-        from deep_translator import GoogleTranslator
-        result = GoogleTranslator(source=src_lang, target="en").translate(text)
-        return result or ""
-    except Exception as exc:
-        logger.warning(f"Back-translation failed: {exc}")
-        return ""
-
-
-def _is_genuine_non_english(
-    native_text: str,
-    english_text: str,
-    src_lang: str,
-    overlap_threshold: float = 0.55,
-) -> bool:
-    """
-    Validate that native_text is a genuine non-English utterance,
-    NOT a phonetic transcription of English words.
-
-    Method: translate native_text back to English, then compare with
-    the original English STT result. High word overlap = phonetic echo = fake.
-
-    Returns True only if the back-translated text is sufficiently different
-    from the English transcription.
-    """
-    if not _is_native_script(native_text):
-        return False
-
-    back_translated = _translate_to_english(native_text, src_lang)
-    logger.info(f"Back-translation [{src_lang}]: '{native_text}' -> '{back_translated}'")
-
-    if not back_translated:
-        # Can't validate — be conservative, reject
-        return False
-
-    overlap = _word_overlap_ratio(english_text.lower(), back_translated.lower())
-    logger.info(
-        f"Overlap between English STT and back-translation: {overlap:.2f} "
-        f"(threshold={overlap_threshold})"
-    )
-
-    if overlap >= overlap_threshold:
+    if hindi_hits or bengali_hits:
         logger.info(
-            f"HIGH OVERLAP ({overlap:.2f}) -> phonetic echo of English, rejecting as non-English"
+            f"Indian Roman markers — Hindi: {hindi_hits}, Bengali: {bengali_hits}"
         )
-        return False
+        # If more Bengali-specific hits, probe Bengali first
+        bn_only = bengali_hits - HINDI_ROMAN_MARKERS  # words only in Bengali set
+        if len(bn_only) >= 1 or len(bengali_hits) > len(hindi_hits):
+            return "bn_first", hindi_hits, bengali_hits
+        return "hi_first", hindi_hits, bengali_hits
 
-    logger.info(f"LOW OVERLAP ({overlap:.2f}) -> genuine non-English speech confirmed")
-    return True
+    return None, set(), set()
 
 
 class SpeechRecognizer:
-    """
-    Wraps SpeechRecognition with validated multi-language probing.
-    """
 
     def __init__(
         self,
@@ -130,74 +159,135 @@ class SpeechRecognizer:
 
     def listen(self, lang: str = "en") -> dict | None:
         """
-        Capture speech and return {"text": str, "lang": str} or None.
-
-        lang="en"  → language unknown, probe + validate
-        lang="hi"  → language known, call STT directly in that language
+        lang="en"  → unknown, run full detection
+        lang="hi"  → confirmed Hindi, use hi-IN directly
+        lang="bn"  → confirmed Bengali, use bn-IN directly
+        etc.
         """
         audio = self._capture_audio()
         if audio is None:
             return None
 
         if lang != "en":
-            # Language confirmed — call STT directly
-            bcp47 = GOOGLE_LANG_MAP.get(lang, "en-US")
-            result = self._google_call(audio, bcp47)
-            if result:
-                result["lang"] = lang
-                return result
-            # Fallback to English if native STT fails
-            result = self._google_call(audio, "en-US")
-            if result:
-                result["lang"] = "en"
-                return result
+            return self._listen_known_language(audio, lang)
+
+        return self._listen_unknown_language(audio)
+
+    # ------------------------------------------------------------------
+    # Known language — direct STT call
+    # ------------------------------------------------------------------
+
+    def _listen_known_language(self, audio: sr.AudioData, lang: str) -> dict | None:
+        bcp47 = GOOGLE_LANG_MAP.get(lang, "en-US")
+        result = self._google_call(audio, bcp47)
+        if result:
+            result["lang"] = lang
+            return result
+        # Fallback to English if native STT fails
+        result = self._google_call(audio, "en-US")
+        if result:
+            result["lang"] = lang
+            return result
+        return self._vosk_recognise(audio)
+
+    # ------------------------------------------------------------------
+    # Unknown language — three-path detection
+    # ------------------------------------------------------------------
+
+    def _listen_unknown_language(self, audio: sr.AudioData) -> dict | None:
+        # Step 1: Get English transcription (always first)
+        en_result = self._google_call(audio, "en-US")
+        en_text = en_result["text"] if en_result else ""
+        logger.info(f"en-US result: '{en_text}'")
+
+        if not en_text:
             return self._vosk_recognise(audio)
 
-        # Language unknown — probe with validation
-        return self._probe_with_validation(audio)
+        # ---------------------------------------------------------------
+        # PATH B — Indian languages (CHECKED FIRST — before langdetect)
+        # langdetect cannot handle Romanized Indian text and would
+        # misidentify it as Indonesian, Dutch, etc.
+        # ---------------------------------------------------------------
+        indian_hint, hindi_hits, bengali_hits = _check_indian_markers(en_text)
+        if indian_hint:
+            logger.info(f"PATH B: Indian markers found ({indian_hint}), probing native STT...")
+            native_result = self._probe_indian_languages(audio, indian_hint)
+            if native_result:
+                return native_result
+            # Probing got no native script — still mark as Indian if strong signal
+            if len(hindi_hits) >= 2 and not bengali_hits:
+                logger.info("PATH B fallback: strong Hindi markers, returning as hi")
+                if en_result:
+                    en_result["lang"] = "hi"
+                    return en_result
+            if len(bengali_hits) >= 2:
+                logger.info("PATH B fallback: strong Bengali markers, returning as bn")
+                if en_result:
+                    en_result["lang"] = "bn"
+                    return en_result
 
-    def _probe_with_validation(self, audio: sr.AudioData) -> dict | None:
-        """
-        Probe multiple languages and validate results to avoid
-        mistaking phonetically-transcribed English for native speech.
-        """
-        # Step 1: Always get English transcription first
-        en_result = self._google_call(audio, "en-US")
-        english_text = en_result["text"] if en_result else ""
-        logger.info(f"English STT: '{english_text}'")
+        # ---------------------------------------------------------------
+        # PATH A — European/other Roman-script languages (CHECKED SECOND)
+        # Only reached when no Indian markers found
+        # ---------------------------------------------------------------
+        roman_lang = self._detect_roman_language(en_text)
+        if roman_lang and roman_lang in ROMAN_DETECTABLE_LANGS:
+            logger.info(f"PATH A: Roman-script language detected: {roman_lang}")
+            if en_result:
+                en_result["lang"] = roman_lang
+                return en_result
 
-        # Step 2: Probe each non-English language
-        for bcp47 in PROBE_LANGUAGES:
-            result = self._google_call(audio, bcp47)
-            if not result:
-                continue
-
-            native_text = result["text"]
-
-            if not _is_native_script(native_text):
-                # Got ASCII back from non-English probe → not this language
-                continue
-
-            iso = self._bcp47_to_iso(bcp47)
-
-            # Step 3: Validate — is this genuine or just phonetic echo?
-            if _is_genuine_non_english(native_text, english_text, iso):
-                logger.info(
-                    f"GENUINE non-English confirmed: [{bcp47}] '{native_text}'"
-                )
-                return {"text": native_text, "lang": iso}
-            else:
-                logger.info(
-                    f"Rejected [{bcp47}] '{native_text}' — phonetic echo of English"
-                )
-                # Continue probing other languages
-
-        # No genuine non-English found → return English result
+        # ---------------------------------------------------------------
+        # PATH C — English (default)
+        # ---------------------------------------------------------------
+        logger.info("PATH C: No non-English markers found, staying English.")
         if en_result:
             en_result["lang"] = "en"
             return en_result
 
         return self._vosk_recognise(audio)
+
+    def _detect_roman_language(self, text: str) -> str | None:
+        """Run langdetect on Roman/Cyrillic text with high confidence threshold."""
+        try:
+            from langdetect import detect_langs, DetectorFactory
+            DetectorFactory.seed = 42
+            results = detect_langs(text)
+            top = results[0]
+            if top.prob >= 0.92 and top.lang not in ("en", "id", "ms"):
+                logger.info(f"langdetect Roman: {top.lang} conf={top.prob:.3f}")
+                return top.lang
+        except Exception as exc:
+            logger.warning(f"langdetect failed: {exc}")
+        return None
+
+    def _probe_indian_languages(self, audio: sr.AudioData, hint: str) -> dict | None:
+        """
+        Probe Indian STT endpoints. Bengali-first or Hindi-first based on hint.
+        Returns result with native script, or None.
+        """
+        if hint == "bn_first":
+            ordered = [("bn", "bn-IN"), ("hi", "hi-IN")] + [
+                p for p in INDIAN_LANG_PROBES if p[0] not in ("bn", "hi")
+            ]
+        else:
+            ordered = INDIAN_LANG_PROBES  # Hindi first
+
+        for iso, bcp47 in ordered:
+            result = self._google_call(audio, bcp47)
+            if result and _is_native_script(result["text"]):
+                result["lang"] = iso
+                logger.info(
+                    f"Native script confirmed [{bcp47}]: '{result['text']}' -> {iso}"
+                )
+                return result
+
+        logger.warning("Indian probe: no native script returned from any endpoint.")
+        return None
+
+    # ------------------------------------------------------------------
+    # Audio capture
+    # ------------------------------------------------------------------
 
     def _capture_audio(self) -> sr.AudioData | None:
         with sr.Microphone() as source:
